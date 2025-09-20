@@ -11,18 +11,21 @@ A simple Python script to calculate **Insulin On Board (IOB)** from bolus histor
 
 ## Usage
 
+```bash
 python iob.py IOB U, Elapsed_time
 python iob.py IOB U, Elapsed_time, U, Elapsed_time, ...
 python iob.py IOB U,"hh:mm"
 python iob.py IOB U,"hh:mm", U,"hh:mm", U,"hh:mm" ...
-```
 
 ### Options
 --dia <hours>` : Set custom duration of insulin action.
 --peak <minutes>` : Adjust absorption peak.
 
+```
+
 ## Examples
 
+```bash
 # Single bolus, elapsed time
 python iob.py 1.0 120
 
@@ -38,6 +41,7 @@ python iob.py 1.0 "23:00" --dia 6
 # With custom peak (90 minutes)
 python iob.py 1.0 "23:00" --peak 90
 
+```
 
 ## License
 MIT License. See [LICENSE](LICENSE) for details.
