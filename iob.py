@@ -68,26 +68,47 @@ def _gamma_cdf_integer_k(k: int, x: float) -> float:
         s += term
     return 1.0 - math.exp(-x) * s
 
-def iob_exponential_oref(units: float, elapsed_min: float,
-                         DIA_hours: float = DIA, PEAK_min: float = PEAK, shape_n: int = 3) -> float:
-    """Single-dose IOB (units) using oref-style exponential (gamma-variate) curve."""
+def iob_exponential_oref(
+    units: float,
+    elapsed_min: float,
+    DIA_hours: float = DIA,
+    PEAK_min: float = PEAK,
+    shape_n: int = 3,
+    *,
+    round_result: bool = True,
+) -> float:
+    """Single-dose IOB (units) using oref-style exponential (gamma-variate) curve.
+
+    When ``round_result`` is False the raw floating point result is returned so callers can
+    accumulate several contributions and round once at the end to avoid double rounding.
+    """
     if units <= 0:
         return 0.0
+    if DIA_hours <= 0:
+        raise ValueError("DIA_hours must be a positive number of hours")
+    peak = float(PEAK_min)
+    if peak <= 0.0:
+        raise ValueError("PEAK_min must be a positive number of minutes")
     end = max(1.0, DIA_hours * 60.0)
     t = max(0.0, float(elapsed_min))
-    if t == 0.0:   return round(float(units), 2)
-    if t >= end:   return 0.0
+    if t == 0.0:
+        value = float(units)
+    elif t >= end:
+        value = 0.0
+    else:
+        n = max(1, int(shape_n))
+        k = n + 1
+        lam = n / peak
 
-    n = max(1, int(shape_n))
-    k = n + 1
-    lam = n / float(PEAK_min)
+        Ft = _gamma_cdf_integer_k(k, lam * t)
+        FD = _gamma_cdf_integer_k(k, lam * end)
+        if FD <= 0.0:
+            value = 0.0
+        else:
+            remaining_frac = max(0.0, 1.0 - (Ft / FD))
+            value = float(units) * remaining_frac
 
-    Ft = _gamma_cdf_integer_k(k, lam * t)
-    FD = _gamma_cdf_integer_k(k, lam * end)
-    if FD <= 0.0:
-        return 0.0
-    remaining_frac = max(0.0, 1.0 - (Ft / FD))
-    return round(float(units) * remaining_frac, 2)
+    return round(value, 2) if round_result else value
 
 def iob_total_from_elapsed(doses, DIA_hours: float = DIA, PEAK_min: float = PEAK,
                            shape_n: int = 3, return_breakdown: bool = False):
@@ -95,15 +116,26 @@ def iob_total_from_elapsed(doses, DIA_hours: float = DIA, PEAK_min: float = PEAK
     doses: iterable of (units, elapsed_min). Ignores entries with elapsed >= DIA.
     Returns total IOB (rounded 2), and optionally a breakdown list of (units, elapsed_min(0f), iob(2f)).
     """
+    if DIA_hours <= 0:
+        raise ValueError("DIA_hours must be a positive number of hours")
     end = DIA_hours * 60.0
     total = 0.0
     breakdown = []
     for units, elapsed in doses:
         if units > 0 and 0.0 <= elapsed < end:
-            i = iob_exponential_oref(units, elapsed, DIA_hours, PEAK_min, shape_n)
-            total += i
+            raw_iob = iob_exponential_oref(
+                units,
+                elapsed,
+                DIA_hours,
+                PEAK_min,
+                shape_n,
+                round_result=False,
+            )
+            total += raw_iob
             if return_breakdown:
-                breakdown.append((float(units), round(float(elapsed), 0), round(i, 2)))
+                breakdown.append(
+                    (float(units), round(float(elapsed), 0), round(raw_iob, 2))
+                )
         elif return_breakdown:
             breakdown.append((float(units), round(float(elapsed), 0), 0.0))
     total = round(total, 2)
@@ -113,7 +145,18 @@ def iob_total_from_elapsed(doses, DIA_hours: float = DIA, PEAK_min: float = PEAK
 def _parse_hhmm_to_elapsed_today_or_yesterday(hhmm: str, now: datetime, dia_minutes: float) -> float:
     """Convert 'HH:MM' to elapsed minutes, using today; if in the future, interpret as yesterday.
        If resulting elapsed > DIA, return None to indicate 'ignore'."""
-    hour, minute = map(int, hhmm.split(':'))
+    parts = hhmm.split(':')
+    if len(parts) != 2:
+        raise ValueError(f"Invalid HH:MM time '{hhmm}'")
+    try:
+        hour = int(parts[0])
+        minute = int(parts[1])
+    except ValueError:
+        raise ValueError(f"Invalid HH:MM time '{hhmm}'") from None
+    if not (0 <= hour <= 23):
+        raise ValueError(f"Invalid HH:MM time '{hhmm}' (hour must be 0-23)")
+    if not (0 <= minute <= 59):
+        raise ValueError(f"Invalid HH:MM time '{hhmm}' (minute must be 0-59)")
     today = now.date()
     when_today = datetime(today.year, today.month, today.day, hour, minute, tzinfo=now.tzinfo)
     if when_today <= now:
@@ -133,6 +176,8 @@ def parse_pairs(tokens, now: datetime, dia_hours: float):
     """
     out = []
     i = 0
+    if dia_hours <= 0:
+        raise ValueError("dia_hours must be a positive number of hours")
     dia_minutes = dia_hours * 60.0
     n = len(tokens)
     while i < n:
@@ -193,6 +238,9 @@ def main(argv=None):
         return 2
     ns = ap.parse_args(argv)
 
+    if ns.dia <= 0:
+        print("Error: --dia must be a positive number of hours.", file=sys.stderr)
+        return 2
     # use local 'now' (naive) for HH:MM; consistency is fine for CLI
     now = datetime.now()
     try:
@@ -201,13 +249,21 @@ def main(argv=None):
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(2)
 
+    if ns.peak <= 0:
+        print("Error: --peak must be a positive number of minutes.", file=sys.stderr)
+        return 2
+
     if not doses:
         print("Total IOB: 0.00 U (no doses within DIA)", file=sys.stderr)
         return 0
 
-    total, breakdown = iob_total_from_elapsed(
-        doses, DIA_hours=ns.dia, PEAK_min=ns.peak, shape_n=ns.shape_n, return_breakdown=True
-    )
+    try:
+        total, breakdown = iob_total_from_elapsed(
+            doses, DIA_hours=ns.dia, PEAK_min=ns.peak, shape_n=ns.shape_n, return_breakdown=True
+        )
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
 
     if ns.no_round:
         # recompute without rounding for visibility
@@ -216,13 +272,15 @@ def main(argv=None):
         total_raw = 0.0
         raw_rows = []
         for units, elapsed in doses:
-            if 0 <= elapsed < end:
-                # raw value
-                n = max(1, int(ns.shape_n)); k = n + 1; lam = n / float(ns.peak)
-                Ft = _gamma_cdf_integer_k(k, lam * elapsed)
-                FD = _gamma_cdf_integer_k(k, lam * end)
-                remaining_frac = 0.0 if FD <= 0 else max(0.0, 1.0 - (Ft/FD))
-                val = float(units) * remaining_frac
+            if units > 0 and 0 <= elapsed < end:
+                val = iob_exponential_oref(
+                    units,
+                    elapsed,
+                    DIA_hours=ns.dia,
+                    PEAK_min=ns.peak,
+                    shape_n=ns.shape_n,
+                    round_result=False,
+                )
                 total_raw += val
                 raw_rows.append((units, elapsed, val))
         print(f"Total IOB (raw): {total_raw}")
