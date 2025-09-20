@@ -1,0 +1,16 @@
+[project]
+name = "iob-calculator"
+version = "0.1.0"
+description = "Insulin On Board calculator with CLI"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+
+authors = [
+    { name = "Luca Brigatti", email = "thot-tawy@gmail.com" }
+]
+
+dependencies = []
+
+[project.scripts]
+iob = "iob:main"
