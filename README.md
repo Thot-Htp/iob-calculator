@@ -41,3 +41,8 @@ python iob.py 1.0 "23:00" --peak 90
 
 ## License
 MIT License. See [LICENSE](LICENSE) for details.
+
+Disclaimer
+This software is provided for educational and informational purposes only.  
+It must not be used to make medical decisions without consulting your own physician or a qualified healthcare provider.  
+The authors and contributors accept no responsibility for any consequences resulting from the use of this software in medical or clinical settings.
